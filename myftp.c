@@ -308,14 +308,17 @@ void clientCommands(int debug, int socketfd){
                                         return;
                                 }
 
+				int bytesInFile = lseek(fd, 0, SEEK_END);
+				lseek(fd, 0, SEEK_SET);
                                 int numOfBytes = read(socketfd, serverResponse, sizeof(serverResponse) - 1);
+
                                 if(numOfBytes > 0){
                                         serverResponse[strcspn(serverResponse, "\n")] = '\0';
                                         if(debug) printf("DEBUG: Server response: '%s'\n", serverResponse);
 
                                         if(serverResponse[0] == 'A'){
                                                 if(debug) printf("DEBUG: Data connection established\n");
-						char buffer[8192];
+						char buffer[bytesInFile];
 						int numOfBytesRead;
 						while((numOfBytesRead = read(fd, buffer, sizeof(buffer))) > 0){
 							if(write(dataSocket, buffer, numOfBytesRead) < 0){
@@ -323,6 +326,7 @@ void clientCommands(int debug, int socketfd){
 								break;
 							}
 							if(debug) printf("DEBUG: Writing '%d' bytes to server\n", numOfBytesRead);
+							printf("File transferring to server directory\n");
 						}
 						if(numOfBytesRead < 0){
 							fprintf(stderr, "ERROR: Can't read data: '%s'\n", strerror(errno));
@@ -336,7 +340,7 @@ void clientCommands(int debug, int socketfd){
                                 else{
                                         fprintf(stderr, "ERROR: Server response not read\n");
                                 }
-				if(debug) printf("DEBUG: Closing local file\n");
+				printf("'%s' transfered to server, closing local file\n", pathName);
 				close(fd);
                                 close(dataSocket);
                         }
