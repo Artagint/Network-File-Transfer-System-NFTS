@@ -35,7 +35,7 @@ int main(int argc, char const *argv[]){
 }
 
 void serverCommands(int connectfd, int debug){
-	char buffer[1024];
+	char buffer[PATH_MAX + 2];
 
 	while(1){
 		int readChar;

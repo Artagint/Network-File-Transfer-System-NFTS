@@ -3,6 +3,7 @@
 int clientSide(const char *address, const char *somePort, int debug);
 void clientCommands(int debug, int socketfd);
 int establishDataConnection(int socket, int debug);
+int readResponse(int socketfd, char *buffer, int bufferSize);
 
 int main(int argc, char const *argv[]){
 	int debug = 0;
@@ -46,27 +47,21 @@ void clientCommands(int debug, int socketfd){
 		}
 
 		if(strcmp(userCommand, "exit") == 0){
-			char serverResponse[1024];
+			char buffer[PATH_MAX + 2];
 			if(write(socketfd, "Q\n", 2) < 0){
 				fprintf(stderr, "ERROR: Can't send command to server\n");
-				return;
 			}
-			
-			int numOfBytes = read(socketfd, serverResponse, sizeof(serverResponse) - 1);
-			if(numOfBytes > 0){
-				serverResponse[strcspn(serverResponse, "\n")] = '\0';
-				if(debug) printf("DEBUG: Server reponse: '%s'\n", serverResponse);
+			if(readResponse(socketfd, buffer, sizeof(buffer)) != 0) break;
+			if(debug) printf("DEBUG: Server reponse: '%s'\n", buffer);
 
-				if(serverResponse[0] == 'A'){
-				       	printf("Client exiting normally\n");
-				}
-
+			if(buffer[0] == 'A'){
+			       	printf("Client exiting normally\n");	
 			}
 			else{
 				fprintf(stderr, "ERROR: Server response not read\n");
 			}
 			close(socketfd);
-			return;
+			break;
 		}
 		else if(strcmp(userCommand, "cd") == 0){
 			if(pathName){
@@ -74,52 +69,49 @@ void clientCommands(int debug, int socketfd){
 					printf("Changed local directory to '%s\n", pathName);
 				}
 				else{
-					fprintf(stderr, "ERROR: Change directory: '%s'\n", strerror(errno));
+					fprintf(stderr, "ERROR: Can't change directory: '%s'\n", strerror(errno));
+					continue;
 				}
 			}
 			else{
 				fprintf(stderr, "ERROR: proper format is 'cd <pathname>'\n");
+				continue;
 			}
 		}
 		else if(strcmp(userCommand, "rcd") == 0){
 			if(pathName){
 				char path[1024];
-				char serverResponse[1024];
+				char buffer[PATH_MAX + 2];
 				snprintf(path, sizeof(path), "C%s\n", pathName);
 
 				if(write(socketfd, path, strlen(path)) < 0){
 					fprintf(stderr, "ERROR: Can't send command to server\n");
-					return;
+					continue;
 				}
+				if(readResponse(socketfd, buffer, sizeof(buffer)) != 0) continue;
+				if(debug) printf("DEBUG: Server response: '%s'\n", buffer);
 
-				int numOfBytes = read(socketfd, serverResponse, sizeof(serverResponse) - 1);
-				if(numOfBytes > 0){
-					serverResponse[strcspn(serverResponse, "\n")] = '\0';
-					if(debug) printf("DEBUG: Server response: '%s'\n", serverResponse);
-
-					if(serverResponse[0] == 'A'){
-						printf("Changed remote directory to '%s'\n", pathName);
-					}
-					else if(serverResponse[0] == 'E'){
-						fprintf(stderr, "ERROR: response from server: '%s'\n", (serverResponse + 1));
-					}
+				if(buffer[0] == 'A'){
+					printf("Changed remote directory to '%s'\n", pathName);
 				}
-				else{
-					fprintf(stderr, "ERROR: Server response not read\n");
+				else if(buffer[0] == 'E'){
+					fprintf(stderr, "ERROR: response from server: '%s'\n", (buffer + 1));
+					continue;
 				}
 			}
 			else{
 				fprintf(stderr, "ERROR: proper format is 'rcd <pathname>'\n");
+				continue;
 			}
 		}
 		else if(strcmp(userCommand, "ls") == 0){
 			int fd[2];
 			pipe(fd);
-			pid_t lsFork = fork();
 
+			pid_t lsFork = fork();
 			if(lsFork < 0){
 				fprintf(stderr, "ERRROR: fork for ls failed\n");
-				return;
+				continue;
 			}
 			if(lsFork == 0){
 				close(fd[0]);
@@ -134,7 +126,7 @@ void clientCommands(int debug, int socketfd){
 			pid_t moreFork = fork();
 			if(moreFork < 0){
 				fprintf(stderr, "ERROR: fork for more failed\n");
-				return;
+				continue;
 			}
 			if(moreFork == 0){
 				close(fd[1]);
@@ -145,7 +137,6 @@ void clientCommands(int debug, int socketfd){
 				fprintf(stderr, "ERROR more failed to execute\n");
 				exit(1);
 			}
-
 			close(fd[0]);
 			close(fd[1]);
 			wait(NULL);
@@ -169,35 +160,32 @@ void clientCommands(int debug, int socketfd){
 				}
 
 				char path[1024];
-                                char serverResponse[1024];
+                                char buffer[PATH_MAX + 2];
                                 snprintf(path, sizeof(path), "G%s\n", pathName);
 
                                 if(write(socketfd, path, strlen(path)) < 0){
                                         fprintf(stderr, "ERROR: Can't send command to server\n");
 					close(dataSocket);
-                                        return;
+                                        continue;
                                 }
-
-                                int numOfBytes = read(socketfd, serverResponse, sizeof(serverResponse) - 1);
-                                if(numOfBytes > 0){
-                                        serverResponse[strcspn(serverResponse, "\n")] = '\0';
-                                        if(debug) printf("DEBUG: Server response: '%s'\n", serverResponse);
-
-                                        if(serverResponse[0] == 'A'){
-						if(debug) printf("DEBUG: Data connection established\n");
-
-                                        }
-                                        else if(serverResponse[0] == 'E'){
-                                                fprintf(stderr, "ERROR: response from server: '%s'\n", (serverResponse + 1));
-                                        }
-                                }
-				else{
-					fprintf(stderr, "ERROR: Server response not read\n");
+                                if(readResponse(socketfd, buffer, sizeof(buffer)) != 0){
+					close(dataSocket);
+					continue;
 				}
+                                if(debug) printf("DEBUG: Server response: '%s'\n", buffer);
+
+                                if(buffer[0] == 'A'){
+					if(debug) printf("DEBUG: Data connection established\n");
+                                }
+                                else if(buffer[0] == 'E'){
+                                	fprintf(stderr, "ERROR: response from server: '%s'\n", (buffer + 1));
+					continue;
+                                }
 				close(dataSocket);
 			}
 			else{
 				fprintf(stderr, "ERROR: proper format is 'get <pathname>'\n");
+				continue;
 			}
 		}
 		else if(strcmp(userCommand, "show") == 0){
@@ -207,151 +195,187 @@ void clientCommands(int debug, int socketfd){
                                 int dataSocket = establishDataConnection(socketfd, debug);
                                 if(dataSocket < 0){
                                         fprintf(stderr, "ERROR: Failed to establish data connection\n");
-                                        return;
+                                        continue;
                                 }
 
                                 char path[1024];
-                                char serverResponse[1024];
+                                char buffer[PATH_MAX + 2];
                                 snprintf(path, sizeof(path), "G%s\n", pathName);
 
                                 if(write(socketfd, path, strlen(path)) < 0){
                                         fprintf(stderr, "ERROR: Can't send command to server\n");
 					close(dataSocket);
-                                        return;
+                                        continue;
                                 }
 				if(debug) printf("DEBUG: Waiting for server response\n");
 
-                                int numOfBytes = read(socketfd, serverResponse, sizeof(serverResponse) - 1);
-                                if(numOfBytes > 0){
-                                        serverResponse[strcspn(serverResponse, "\n")] = '\0';
-                                        if(debug) printf("DEBUG: Server response: '%s'\n", serverResponse);
-
-                                        if(serverResponse[0] == 'A'){
-                                                if(debug) printf("DEBUG: Data connection established\n");
-						
-						int fd[2];
-						pipe(fd);
-						pid_t moreFork = fork();
-						if(moreFork < 0){
-							fprintf(stderr, "ERROR: Fork for 'more' failed\n");
-							close(dataSocket);
-							return;
-						}
-						if(moreFork == 0){
-							close(fd[1]);
-							dup2(fd[0], 0);
-							close(fd[0]);
-
-							execlp("more", "more", "-20", NULL);
-							fprintf(stderr, "ERROR: Failed to execute 'more'\n");
-							exit(1);
-						}
-						else{
-							close(fd[0]);
-							char buffer[8192];
-							int numOfBytesRead;
-
-							while((numOfBytesRead = read(dataSocket, buffer, sizeof(buffer))) > 0){
-								if(write(fd[1], buffer, numOfBytesRead) < 0){
-									fprintf(stderr, "ERROR: Can't write to pipe\n");
-									break;
-								}
-							}
-							if(numOfBytesRead < 0){
-								fprintf(stderr, "ERROR: Can't read data: '%s'\n", strerror(errno));
-							}
-							close(fd[1]);
-							close(dataSocket);
-
-							if(debug) printf("DEBUG: waiting for child process to complete execution\n");
-							wait(NULL);
-							if(debug) printf("DEBUG: Data display and 'more' complete\n");
-						}
-
-                                        }
-                                        else if(serverResponse[0] == 'E'){
-                                                fprintf(stderr, "ERROR: response from server: '%s'\n", (serverResponse + 1));
-						close(dataSocket);
-                                        }
-                                }
-                                else{
-                                        fprintf(stderr, "ERROR: Server response not read\n");
+                                if(readResponse(socketfd, buffer, sizeof(buffer)) != 0){
 					close(dataSocket);
+					continue;
+				}
+                                if(debug) printf("DEBUG: Server response: '%s'\n", buffer);
+
+                                if(buffer[0] == 'A'){
+                                        if(debug) printf("DEBUG: Data connection established\n");
+						
+					int fd[2];
+					pipe(fd);
+					pid_t moreFork = fork();
+					if(moreFork < 0){
+						fprintf(stderr, "ERROR: Fork for 'more' failed\n");
+						close(dataSocket);
+						continue;
+					}
+					if(moreFork == 0){
+						close(fd[1]);
+						dup2(fd[0], 0);
+						close(fd[0]);
+
+						execlp("more", "more", "-20", NULL);
+						fprintf(stderr, "ERROR: Failed to execute 'more'\n");
+						exit(1);
+					}
+					else{
+						close(fd[0]);
+						char buffer[4096];
+						int numOfBytesRead;
+
+						while((numOfBytesRead = read(dataSocket, buffer, sizeof(buffer))) > 0){
+							if(write(fd[1], buffer, numOfBytesRead) < 0){
+								fprintf(stderr, "ERROR: Can't write to pipe\n");
+								continue;
+							}						
+						}
+						if(numOfBytesRead < 0){
+							fprintf(stderr, "ERROR: Can't read data: '%s'\n", strerror(errno));
+							continue;
+						}
+						close(fd[1]);
+						close(dataSocket);
+						if(debug) printf("DEBUG: waiting for child process to complete execution\n");
+						wait(NULL);
+						if(debug) printf("DEBUG: Data display and 'more' complete\n");
+					}
+                                }
+                                else if(buffer[0] == 'E'){
+                                        fprintf(stderr, "ERROR: response from server: '%s'\n", (buffer + 1));
+					close(dataSocket);
+					continue;
                                 }
                         }
                         else{
                                 fprintf(stderr, "ERROR: proper format is 'get <pathname>'\n");
+				continue;
                         }
 		}
 		else if(strcmp(userCommand, "put") == 0){
 			if(pathName){
+				struct stat area;
+				if(stat(pathName, &area) < 0){
+					fprintf(stderr, "ERROR: File '%s' is invalid: '%s'\n", pathName, strerror(errno));
+					continue;
+				}
+				if(!S_ISREG(area.st_mode)){
+					fprintf(stderr, "ERROR: '%s' is not a regular file\n", pathName);
+					continue;
+				}
+
 				int fd = open(pathName, O_RDONLY);
 				if(fd < 0){
 					fprintf(stderr, "ERROR: Can't open file '%s'\n", strerror(errno));
+					continue;
 				}
 				if(debug) printf("DEBUG: Opened local file '%s' for reading\n", pathName);
 
                                 int dataSocket = establishDataConnection(socketfd, debug);
                                 if(dataSocket < 0){
                                         fprintf(stderr, "ERROR: Failed to establish data connection\n");
-                                        return;
+					close(fd);
+                                        continue;
                                 }
 
-                                char path[1024];
-                                char serverResponse[1024];
-                                snprintf(path, sizeof(path), "P%s\n", pathName);
+				char baseName[PATH_MAX];
+				const char *lastSlash = NULL;
+				for(int i = 0; pathName[i] != '\0'; i++){
+					if(pathName[i] == '/' && pathName[i + 1] != '\0'){
+						lastSlash = &pathName[i];
+					}
+				}
+				if(lastSlash) strncpy(baseName, (lastSlash + 1), (sizeof(baseName) - 1));
+				else strncpy(baseName, pathName, (sizeof(baseName) - 1));
+				baseName[sizeof(baseName) - 1] = '\0';
+
+                                char path[PATH_MAX + 2];
+                                char buffer[PATH_MAX + 2];
+                                snprintf(path, sizeof(path), "P%s\n", baseName);
 
                                 if(write(socketfd, path, strlen(path)) < 0){
                                         fprintf(stderr, "ERROR: Can't send command to server\n");
 					close(fd);
 					close(dataSocket);
-                                        return;
+                                        continue;
                                 }
 
-				int bytesInFile = lseek(fd, 0, SEEK_END);
-				lseek(fd, 0, SEEK_SET);
-                                int numOfBytes = read(socketfd, serverResponse, sizeof(serverResponse) - 1);
+				if(readResponse(socketfd, buffer, sizeof(buffer)) != 0){
+					close(fd);
+					close(dataSocket);
+					continue;
+				}
+                                if(debug) printf("DEBUG: Server response: '%s'\n", buffer);
 
-                                if(numOfBytes > 0){
-                                        serverResponse[strcspn(serverResponse, "\n")] = '\0';
-                                        if(debug) printf("DEBUG: Server response: '%s'\n", serverResponse);
-
-                                        if(serverResponse[0] == 'A'){
-                                                if(debug) printf("DEBUG: Data connection established\n");
-						char buffer[bytesInFile];
-						int numOfBytesRead;
-						while((numOfBytesRead = read(fd, buffer, sizeof(buffer))) > 0){
-							if(write(dataSocket, buffer, numOfBytesRead) < 0){
-								fprintf(stderr, "ERROR: Can't write to data connection\n");
-								break;
-							}
-							if(debug) printf("DEBUG: Writing '%d' bytes to server\n", numOfBytesRead);
-							printf("File transferring to server directory\n");
+                                if(buffer[0] == 'A'){
+                                        if(debug) printf("DEBUG: Data connection established\n");
+					char fileBuffer[1024];
+					int numOfBytesRead;
+					while((numOfBytesRead = read(fd, fileBuffer, sizeof(fileBuffer))) > 0){
+						if(write(dataSocket, fileBuffer, numOfBytesRead) < 0){
+							fprintf(stderr, "ERROR: Can't write to data connection\n");
+							continue;
 						}
-						if(numOfBytesRead < 0){
-							fprintf(stderr, "ERROR: Can't read data: '%s'\n", strerror(errno));
-						}
-                                        }
-                                        else if(serverResponse[0] == 'E'){
-                                                fprintf(stderr, "ERROR: response from server: '%s'\n", (serverResponse + 1));
-						if(debug) printf("DEBUG: Skipping transmission of file data to server\n");
-                                        }
+						if(debug) printf("DEBUG: Writing '%d' bytes to server\n", numOfBytesRead);
+					}
+					if(numOfBytesRead < 0){
+						fprintf(stderr, "ERROR: Can't read data: '%s'\n", strerror(errno));
+					}
+					printf("'%s' transfered to server, closing local file\n", pathName);
                                 }
-                                else{
-                                        fprintf(stderr, "ERROR: Server response not read\n");
+                                else if(buffer[0] == 'E'){
+                                        fprintf(stderr, "ERROR: response from server: '%s'\n", (buffer + 1));
+					if(debug) printf("DEBUG: Skipping transmission of file data to server\n");
+					continue;
                                 }
-				printf("'%s' transfered to server, closing local file\n", pathName);
 				close(fd);
                                 close(dataSocket);
                         }
                         else{
                                 fprintf(stderr, "ERROR: proper format is 'get <pathname>'\n");
+				continue;
                         }
 		}
 		else{
 			fprintf(stderr, "ERROR: Command '%s' is invalid\n", userCommand);
+			continue;
 		}
 	}
+}
+
+int readResponse(int socketfd, char *buffer, int bufferSize){
+	int i = 0;
+	while(1){
+		int rsp = read(socketfd, &buffer[i], 1);
+		if(rsp < 0){
+			fprintf(stderr, "ERROR: Failed to read: '%s'\n", strerror(errno));
+			return errno;
+		}
+		if(rsp == 0){
+			fprintf(stderr, "ERROR: Server closed connection: '%s'\n", strerror(errno));
+			return errno;
+		}
+		if(buffer[i] == '\n') break;
+		i++;
+	}
+	buffer[i] = '\0';
+	return 0;
 }
 
 int establishDataConnection(int someSocket, int debug){

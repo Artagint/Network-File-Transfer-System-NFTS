@@ -10,3 +10,5 @@
 #include <netdb.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <sys/stat.h>
