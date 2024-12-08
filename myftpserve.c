@@ -7,6 +7,7 @@ int readResponse(int socketfd, char *buffer, int bufferSize);
 void Qcommand(int connectfd);
 void Ccommand(int connectfd, const char *pathName, int debug);
 void Lcommand(int connectfd, int dataSocket, int debug);
+void Gcommand(int connectfd, int dataSocket, int debug);
 
 int main(int argc, char const *argv[]){
 	int debug = 0;
@@ -44,7 +45,6 @@ void serverCommands(int connectfd, int debug){
 
 	while(1){
 		if(readResponse(connectfd, clientResponse, sizeof(clientResponse)) != 0){
-			fprintf(stderr, "ERROR: Can't read client response\n");
 			break;
 		}
 		if(debug) printf("DEBUG: Child '%d' sent: '%s'\n", getpid(), clientResponse);
@@ -76,12 +76,11 @@ void serverCommands(int connectfd, int debug){
 					Lcommand(connectfd, dataSocket, debug);
 				}
 				else if(commandBuffer[0] == 'G'){
-					if(debug) printf("DEBUG: 'get' or 'show' command received\n");
-					write(dataSocket, "TESTING G\n", 10); 
+					Gcommand(connectfd, dataSocket, debug);
 				}
 				else if(commandBuffer[0] == 'P'){
 					if(debug) printf("DEBUG: 'put' command received\n");
-					write(dataSocket, "TESTING P\n", 10); 
+					 
 				}
 				else{
 					fprintf(stderr, "ERROR: Unknown command after 'D'. Has to be 'L', 'G', or 'P'\n");
@@ -252,8 +251,51 @@ void Lcommand(int connectfd, int dataSocket, int debug){
         const char *serverResponse = "A\n";
         if(write(connectfd, serverResponse, strlen(serverResponse)) < 0){
                 fprintf(stderr, "ERROR: Can't send 'A' to client: '%s'\n", strerror(errno));
+		return;
         }
         if(debug) printf("DEBUG: 'rls' command complete\n");
+}
+
+void Gcommand(int connectfd, int dataSocket, int debug){
+	char fileBuffer[PATH_MAX + 2];
+	if(readResponse(connectfd, fileBuffer, sizeof(fileBuffer)) != 0){
+		const char *errResponse = "EFailed to read file path\n";
+		write(connectfd, errResponse, strlen(errResponse));
+		return;
+	}
+	if(debug) printf("DEBUG: File path: '%s'\n", fileBuffer);
+
+	int fd = open(fileBuffer, O_RDONLY);
+	if(fd < 0){
+		char errResponse[PATH_MAX + 2];
+		snprintf(errResponse, sizeof(errResponse), "E%s\n", strerror(errno));
+		write(connectfd, errResponse, strlen(errResponse));
+		if(debug) printf("DEBUG: Can't open file '%s': '%s'\n", fileBuffer, strerror(errno));
+		return;
+	}
+
+	const char *serverRes = "A\n";
+	if(write(connectfd, serverRes, strlen(serverRes)) < 0){
+		fprintf(stderr, "ERROR: Can't send 'A' to client\n");
+		return;
+	}
+	if(debug) printf("DEBUG: Sent 'A' to client\n");
+	char fileBuffer[PATH_MAX + 2];
+
+	if(debug) printf("DEBUG: Transferring '%s' to client\n", fileBuffer);
+	char buffer[4096];
+	int numOfBytesRead;
+	while((numOfBytesRead = read(fd, buffer, sizeof(buffer))) > 0){
+		if(write(dataSocket, buffer, numOfBytesRead) < 0){
+			fprintf(stderr, "ERROR: Can't write to client: '%s'\n", strerror(errno));
+			close(fd);
+			close(dataSocket);
+			return;
+		}
+	}
+	if(debug) printf("DEBUG: Succesfuly transferred '%s' to client\n", fileBuffer);
+	close(fd);
+	close(dataSocket);
 }
 
 int serverSide(int portNumber, int debug){

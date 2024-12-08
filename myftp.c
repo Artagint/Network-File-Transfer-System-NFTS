@@ -277,12 +277,70 @@ void lsCommand(int debug){
 }
 
 void rlsCommand(int socketfd, int debug){
-	char serverResponse[1024];
+	char serverResponse[PATH_MAX + 2];
+	int dataSocket = establishDataConnection(socketfd, debug);
+	if(dataSocket < 0){
+		fprintf(stderr, "ERROR: Can't establish connection\n");
+		return;
+	}
+	if(debug) printf("DEBUG: Connecton established\n");
+
         if(write(socketfd, "L\n", 2) < 0){
         	fprintf(stderr, "ERROR: Can't send command to server\n");
+		close(dataSocket);
         	return;
         }
         if(debug) printf("DEBUG: sent rls command to server\n");
+
+	if(readResponse(socketfd, serverResponse, sizeof(serverResponse)) != 0){
+		fprintf(stderr, "ERROR: Can't read server response\n");
+		close(dataSocket);
+		return;
+	}
+	if(debug) printf("DEBUG: Server response: '%s'\n", serverResponse);
+
+	if(serverResponse[0] == 'A'){
+		if(debug) printf("DEBUG: Server sent 'A'\n");
+
+		int fd[2];
+		pipe(fd);
+
+		pid_t moreFork = fork();
+		if(moreFork < 0){
+			fprintf(stderr, "ERROR: Fork for 'more' failed: '%s'\n", strerror(errno));
+			close(dataSocket);
+			return;
+		}
+		
+		if(moreFork == 0){
+			close(fd[1]);
+			dup2(fd[0], 0);
+			close(fd[0]);
+			execlp("more", "more", "-20", NULL);
+			fprintf(stderr, "ERROR: Failed to executed 'more': '%s'\n", strerror(errno));
+			exit(1);
+		}
+		else{
+			close(fd[0]);
+			char buffer[4096];
+			int numOfBytesRead;
+			while((numOfBytesRead = read(dataSocket, buffer, sizeof(buffer))) > 0){
+				if(write(fd[1], buffer, numOfBytesRead) < 0){
+					fprintf(stderr, "ERROR: Can't write to pipe: '%s'\n", strerror(errno));
+					return;
+				}
+			}
+			close(fd[1]);
+			close(dataSocket);
+			wait(NULL);
+		}
+	}
+	else if(serverResponse[0] == 'E'){
+		fprintf(stderr, "ERROR: Server sent: '%s'\n", (serverResponse + 1));
+		close(dataSocket);
+		return;
+	}
+	if(debug) printf("DEBUG: 'rls' command complete\n");
 }
 
 void getCommand(int socketfd, int debug, const char *pathName) {
