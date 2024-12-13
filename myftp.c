@@ -18,18 +18,24 @@ int main(int argc, char const *argv[]){
 	int debug = 0;
 	if(strcmp(argv[1], "-d") == 0) debug = 1;
 
-	const char *somePort;
-	const char *address;
 	if(debug){
-		somePort = argv[2];
-		address = argv[3];
+		if(argc < 4){
+			fprintf(stderr, "ERROR: Proper format is <./myftp -d port# hostname>\n");
+			return 1;
+		}
+		const char *somePort = argv[2];
+		const char *address = argv[3];
+		return clientSide(address, somePort, debug);
 	}
 	else{
-		somePort = argv[1];
-		address = argv[2];
+		if(argc < 2){
+			fprintf(stderr, "ERROR: Proper format is <./myftp hostname>\n");
+			return 1;
+		}
+		const char *somePort = "49999";
+		const char *address = argv[1];
+		return clientSide(address, somePort, debug);
 	}
-
-	return clientSide(address, somePort, debug);
 }
 
 void clientCommands(int debug, int socketfd){
@@ -116,7 +122,7 @@ int readResponse(int socketfd, char *buffer, int bufferSize){
 }
 
 int establishDataConnection(int someSocket, int debug){
-	char serverResponse[1024];
+	char serverResponse[512];
 	int socketfd;
 	struct addrinfo hints, *actualdata;
 	char port[16];
@@ -183,7 +189,7 @@ void exitCommand(int socketfd, int debug){
         if(debug) printf("DEBUG: Server reponse: '%s'\n", buffer);
 
         if(buffer[0] == 'A'){
-        	printf("Client exiting normally\n");
+        	printf("Client exited normally\n");
         }
 	else{
         	fprintf(stderr, "ERROR: Server response not read\n");
@@ -194,7 +200,7 @@ void exitCommand(int socketfd, int debug){
 void cdCommand(int debug, const char *pathName){
 	if(pathName){
         	if(chdir(pathName) == 0){
-        		printf("Changed local directory to '%s\n", pathName);
+        		if(debug) printf("Changed local directory to '%s'\n", pathName);
         	}
         	else{
         		fprintf(stderr, "ERROR: Can't change directory: '%s'\n", strerror(errno));
@@ -207,7 +213,7 @@ void cdCommand(int debug, const char *pathName){
 
 void rcdCommand(int socketfd, int debug, const char *pathName) {
         if(pathName) {
-                char path[1024];
+                char path[PATH_MAX + 2];
                 char buffer[PATH_MAX + 2];
                 snprintf(path, sizeof(path), "C%s\n", pathName);
 
@@ -224,7 +230,7 @@ void rcdCommand(int socketfd, int debug, const char *pathName) {
                 if(debug) printf("DEBUG: Server response: '%s'\n", buffer);
 
                 if(buffer[0] == 'A'){
-                        printf("Changed remote directory to '%s'\n", pathName);
+                        if(debug) printf("Changed remote directory to '%s'\n", pathName);
                 }
 	       	else if (buffer[0] == 'E'){
                         fprintf(stderr, "ERROR: response from server: '%s'\n", (buffer + 1));
@@ -238,7 +244,10 @@ void rcdCommand(int socketfd, int debug, const char *pathName) {
 
 void lsCommand(int debug){
         int fd[2];
-        pipe(fd);
+	if(pipe(fd) < 0){
+		fprintf(stderr, "ERRNO: Can't make pipe: '%s'\n", strerror(errno));
+		return;
+	}
 
         pid_t lsFork = fork();
         if(lsFork < 0){
@@ -271,8 +280,12 @@ void lsCommand(int debug){
         }
         close(fd[0]);
         close(fd[1]);
-        wait(NULL);
-        wait(NULL);
+        if(waitpid(lsFork, NULL, 0) < 0){
+		fprintf(stderr, "ERROR: Failed to wait for 'ls': '%s'\n", strerror(errno));
+	}
+	if(waitpid(moreFork, NULL, 0) < 0){
+		fprintf(stderr, "ERROR: Failed to wait for 'more': '%s'\n", strerror(errno));
+	}
         if(debug) printf("DEBUG: ls execution complete\n");
 }
 
@@ -303,7 +316,11 @@ void rlsCommand(int socketfd, int debug){
 		if(debug) printf("DEBUG: Server sent 'A'\n");
 
 		int fd[2];
-		pipe(fd);
+		if(pipe(fd) < 0){
+			fprintf(stderr, "ERROR: Can't make pipe: '%s'\n", strerror(errno));
+			close(dataSocket);
+			return;
+		}
 
 		pid_t moreFork = fork();
 		if(moreFork < 0){
@@ -332,7 +349,9 @@ void rlsCommand(int socketfd, int debug){
 			}
 			close(fd[1]);
 			close(dataSocket);
-			wait(NULL);
+			if(waitpid(moreFork, NULL, 0) < 0){
+				fprintf(stderr, "ERROR: Failed to wait for 'more': '%s'\n", strerror(errno));
+			}
 		}
 	}
 	else if(serverResponse[0] == 'E'){
@@ -374,7 +393,7 @@ void getCommand(int socketfd, int debug, const char *pathName) {
                 if(buffer[0] == 'A'){
                         if(debug) printf("DEBUG: Data connection established\n");
                         if(debug) printf("DEBUG: Server acknowledged 'get'\n");
-                        int fd = open(baseName, O_CREAT | O_WRONLY | O_EXCL, 0666);
+                        int fd = open(baseName, O_CREAT | O_WRONLY | O_EXCL, 0777);
                         if(fd < 0){
                                 if(errno == EEXIST){
                                         fprintf(stderr, "ERROR: File '%s' already exists\n", baseName);
@@ -392,13 +411,16 @@ void getCommand(int socketfd, int debug, const char *pathName) {
                         while((numOfBytesRead = read(dataSocket, fileBuffer, sizeof(fileBuffer))) > 0){
                                 if(write(fd, fileBuffer, numOfBytesRead) < 0){
                                         fprintf(stderr, "ERROR: Can't write to file '%s'\n", strerror(errno));
+					close(fd);
+					close(dataSocket);
+					return;
                                 }
                                 if(debug) printf("DEBUG: Wrote '%d' bytes to file\n", numOfBytesRead);
                         }
                         if(numOfBytesRead < 0){
                                 fprintf(stderr, "ERROR: Can't read data: '%s'\n", strerror(errno));
                         }
-                        printf("'%s' retreived from server, closing local file\n", pathName);
+                        if(debug) printf("'%s' retreived from server, closing local file\n", pathName);
                         close(fd);
                 }
                 else if(buffer[0] == 'E'){
@@ -422,7 +444,7 @@ void showCommand(int socketfd, int debug, const char *pathName) {
                         return;
                 }
 
-                char path[1024];
+                char path[PATH_MAX + 2];
                 char buffer[PATH_MAX + 2];
                 snprintf(path, sizeof(path), "G%s\n", pathName);
 
@@ -443,7 +465,12 @@ void showCommand(int socketfd, int debug, const char *pathName) {
                         if(debug) printf("DEBUG: Data connection established\n");
 
                         int fd[2];
-                        pipe(fd);
+			if(pipe(fd) < 0){
+				fprintf(stderr, "ERROR: Can't make pipe: '%s'\n", strerror(errno));
+				close(dataSocket);
+				return;
+			}
+
                         pid_t moreFork = fork();
                         if(moreFork < 0){
                                 fprintf(stderr, "ERROR: Fork for 'more' failed\n");
@@ -463,7 +490,6 @@ void showCommand(int socketfd, int debug, const char *pathName) {
                                 close(fd[0]);
                                 char buffer[4096];
                                 int numOfBytesRead;
-
                                 while((numOfBytesRead = read(dataSocket, buffer, sizeof(buffer))) > 0){
                                         if(write(fd[1], buffer, numOfBytesRead) < 0){
                                                 fprintf(stderr, "ERROR: Can't write to pipe\n");
@@ -476,7 +502,9 @@ void showCommand(int socketfd, int debug, const char *pathName) {
                                 close(fd[1]);
                                 close(dataSocket);
                                 if(debug) printf("DEBUG: waiting for child process to complete execution\n");
-                                wait(NULL);
+                                if(waitpid(moreFork, NULL, 0) < 0){
+					fprintf(stderr, "ERROR: Failed to wait for 'more': '%s'\n", strerror(errno));
+				}
                                 if(debug) printf("DEBUG: Data display and 'more' complete\n");
                         }
                 }
@@ -553,7 +581,7 @@ void putCommand(int socketfd, int debug, const char *pathName) {
                         if(numOfBytesRead < 0){
                                 fprintf(stderr, "ERROR: Can't read data: '%s'\n", strerror(errno));
                         }
-                        printf("'%s' transfered to server, closing local file\n", pathName);
+                        if(debug) printf("'%s' transfered to server, closing local file\n", pathName);
                 }
                 else if(buffer[0] == 'E'){
                         fprintf(stderr, "ERROR: response from server: '%s'\n", (buffer + 1));
@@ -595,6 +623,7 @@ int clientSide(const char *address, const char *somePort, int debug){
 		freeaddrinfo(actualdata);
 		return errno;
 	}
+	printf("Connection to server '%s'\n", address);
 	if(debug) printf("DEBUG: Connected to server with address: %s on port: %s\n", address, somePort);
 
 	clientCommands(debug, socketfd);
